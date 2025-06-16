@@ -4,3 +4,4 @@ beautifulsoup4
 pillow
 opencv-python
 matplotlib
+numpy
