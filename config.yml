@@ -1,0 +1,6 @@
+ollama:
+  text_model: "ollama/llava-text"
+  vision_model: "ollama/llava-vision"
+scraping:
+  num_images: 5
+  headless: true
