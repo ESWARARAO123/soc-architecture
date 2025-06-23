@@ -73,14 +73,29 @@ if "stage" not in st.session_state:
 
 # Add this function at the top of the file
 
+def ensure_png(image_path):
+    img = Image.open(image_path)
+    png_path = image_path
+    if not image_path.lower().endswith('.png'):
+        png_path = image_path.rsplit('.', 1)[0] + '.png'
+    img.convert('RGB').save(png_path, 'PNG')
+    return png_path
+
 def image_to_mermaid(image_path):
-    # Step 1: Use vision LLM to describe the image
-    text_desc = analyze_image(image_path, "Describe this VLSI architecture diagram in detail.")
+    png_path = ensure_png(image_path)
+    text_desc = analyze_image(png_path, "Describe this VLSI architecture diagram in detail.")
     if text_desc.startswith("[LLM error:"):
         return text_desc, ""
-    # Step 2: Use text LLM to convert description to Mermaid.js
-    mermaid_prompt = f"Convert this VLSI architecture description to a Mermaid.js flowchart:\n\n{text_desc}\n\nReturn only the Mermaid.js code."
+    mermaid_prompt = (
+        "Convert the following VLSI architecture description into a valid Mermaid.js flowchart. "
+        "Return only the Mermaid.js code, starting with 'flowchart TD'. "
+        "Do not include any explanation or extra text.\n\n"
+        f"Description:\n{text_desc}"
+    )
     mermaid_code = ask_text(mermaid_prompt)
+    if not mermaid_code.strip().startswith("flowchart"):
+        print("Mermaid LLM output was not valid code:", mermaid_code)
+        return text_desc, "[Mermaid generation failed]"
     return text_desc, mermaid_code
 
 # 1️⃣ Stage 1: User prompt to fetch images
