@@ -16,7 +16,11 @@ def ask_text(prompt):
         "stream": False
     }
     response = requests.post(OLLAMA_URL, json=payload)
-    return response.json()["response"]
+    data = response.json()
+    if "response" not in data:
+        print("LLM API error (ask_text):", data)
+        return f"[LLM error: {data}]"
+    return data["response"]
 
 def analyze_image(img_path, prompt):
     with open(img_path, "rb") as f:
@@ -30,4 +34,8 @@ def analyze_image(img_path, prompt):
         "stream": False
     }
     response = requests.post(VISION_URL, json=payload)
-    return response.json()["response"]
+    data = response.json()
+    if "response" not in data:
+        print("LLM API error (analyze_image):", data)
+        return f"[LLM error: {data}]"
+    return data["response"]
