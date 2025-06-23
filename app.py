@@ -76,6 +76,8 @@ if "stage" not in st.session_state:
 def image_to_mermaid(image_path):
     # Step 1: Use vision LLM to describe the image
     text_desc = analyze_image(image_path, "Describe this VLSI architecture diagram in detail.")
+    if text_desc.startswith("[LLM error:"):
+        return text_desc, ""
     # Step 2: Use text LLM to convert description to Mermaid.js
     mermaid_prompt = f"Convert this VLSI architecture description to a Mermaid.js flowchart:\n\n{text_desc}\n\nReturn only the Mermaid.js code."
     mermaid_code = ask_text(mermaid_prompt)
@@ -119,19 +121,22 @@ elif st.session_state.stage == 2:
             if st.button(f"Select This Architecture", key=f"sel_{i}"):
                 try:
                     headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+                        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                        'Referer': link,
                     }
-                    response = requests.get(link, headers=headers, timeout=10)
-                    if response.status_code == 200:
+                    response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
+                    if response.status_code == 200 and response.content:
                         os.makedirs("static", exist_ok=True)
-                        img_path = os.path.join("static", f"selected_arch.png")
+                        ext = os.path.splitext(link)[-1].split('?')[0] or '.png'
+                        img_path = os.path.join("static", f"selected_arch{ext}")
                         with open(img_path, "wb") as f:
                             f.write(response.content)
                         st.session_state.selected = img_path
                         st.session_state.stage = 3
                         st.rerun()
                     else:
-                        st.error("Failed to download image. Please try another option.")
+                        st.error(f"Failed to download image (status {response.status_code}). Please try another option.")
                 except Exception as e:
                     st.error(f"Error saving image: {str(e)}")
 
