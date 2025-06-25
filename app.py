@@ -81,22 +81,34 @@ def ensure_png(image_path):
     img.convert('RGB').save(png_path, 'PNG')
     return png_path
 
+def extract_mermaid_code(llm_output):
+    # Remove Markdown code block markers and explanations
+    lines = llm_output.splitlines()
+    code_lines = []
+    in_code = False
+    for line in lines:
+        if line.strip().startswith("flowchart"):
+            in_code = True
+        if in_code:
+            if line.strip().startswith("```"):
+                break
+            code_lines.append(line)
+    return "\n".join(code_lines).strip()
+
 def image_to_mermaid(image_path):
     png_path = ensure_png(image_path)
-    text_desc = analyze_image(png_path, "Describe this VLSI architecture diagram in detail.")
-    if text_desc.startswith("[LLM error:"):
-        return text_desc, ""
+    # Directly ask the vision LLM to generate Mermaid.js code from the image
     mermaid_prompt = (
-        "Convert the following VLSI architecture description into a valid Mermaid.js flowchart. "
+        "Convert this VLSI architecture diagram image into a valid Mermaid.js flowchart. "
         "Return only the Mermaid.js code, starting with 'flowchart TD'. "
-        "Do not include any explanation or extra text.\n\n"
-        f"Description:\n{text_desc}"
+        "Do not include any explanation or Markdown code block markers."
     )
-    mermaid_code = ask_text(mermaid_prompt)
+    mermaid_code_raw = analyze_image(png_path, mermaid_prompt)
+    mermaid_code = extract_mermaid_code(mermaid_code_raw)
     if not mermaid_code.strip().startswith("flowchart"):
-        print("Mermaid LLM output was not valid code:", mermaid_code)
-        return text_desc, "[Mermaid generation failed]"
-    return text_desc, mermaid_code
+        print("Mermaid LLM output was not valid code:", mermaid_code_raw)
+        return "[Vision LLM to Mermaid failed]", "[Mermaid generation failed]"
+    return "[Vision LLM direct to Mermaid]", mermaid_code
 
 # 1️⃣ Stage 1: User prompt to fetch images
 if st.session_state.stage == 1:
@@ -142,12 +154,22 @@ elif st.session_state.stage == 2:
                     }
                     response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
                     if response.status_code == 200 and response.content:
-                        os.makedirs("static", exist_ok=True)
-                        ext = os.path.splitext(link)[-1].split('?')[0] or '.png'
+                        valid_exts = ['.png', '.jpg', '.jpeg', '.webp']
+                        ext = os.path.splitext(link)[-1].split('?')[0].lower()
+                        if ext not in valid_exts:
+                            ext = '.png'
                         img_path = os.path.join("static", f"selected_arch{ext}")
                         with open(img_path, "wb") as f:
                             f.write(response.content)
-                        st.session_state.selected = img_path
+                        # Always convert to PNG for downstream processing
+                        try:
+                            img = Image.open(img_path)
+                            png_path = os.path.join("static", "selected_arch.png")
+                            img.convert('RGB').save(png_path, "PNG")
+                            st.session_state.selected = png_path
+                        except Exception as e:
+                            st.error(f"Downloaded file is not a valid image: {e}")
+                            st.stop()
                         st.session_state.stage = 3
                         st.rerun()
                     else:
@@ -161,98 +183,98 @@ elif st.session_state.stage == 3:
     
     # First, handle the conversion if not already done
     if "diagram_analysis" not in st.session_state:
-        with st.spinner("Converting diagram to interactive format..."):
-            # Convert image to text and Mermaid
+        with st.spinner("Converting diagram to Mermaid.js..."):
             text_desc, mermaid_code = image_to_mermaid(st.session_state.selected)
             st.session_state.diagram_analysis = {
                 "text": text_desc,
                 "mermaid": mermaid_code,
                 "current_mermaid": mermaid_code
             }
+            st.session_state.show_flow = False  # Don't show flow yet
             st.rerun()
     
-    # After conversion is complete, show the diagrams
+    # After conversion is complete, show the code and controls
     if "diagram_analysis" in st.session_state:
         col1, col2 = st.columns(2)
-        
         with col1:
-            # Display original image
             img = Image.open(st.session_state.selected)
             st.image(img, caption="Original Architecture", use_column_width=True)
-        
         with col2:
-            # Display textual description
             st.markdown("### 📝 Architecture Components")
             st.write(st.session_state.diagram_analysis["text"])
-            
-            # Display Mermaid diagram
-            st.markdown("### 🔄 Interactive Diagram")
-            mermaid_div = f"""
-                <div class="mermaid">
-                {st.session_state.diagram_analysis["current_mermaid"]}
-                </div>
-            """
-            
-            html_code = f"""
-                <html>
-                <body>
-                    {mermaid_div}
-                    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-                    <script>
-                        mermaid.initialize({{
-                            startOnLoad: true,
-                            theme: 'default',
-                            flowchart: {{
-                                useMaxWidth: true,
-                                htmlLabels: true,
-                                curve: 'basis'
-                            }}
-                        }});
-                    </script>
-                </body>
-                </html>
-            """
-            
-            st.components.v1.html(html_code, height=500)
-        
-        # Only show modification section after successful conversion
-        if st.session_state.diagram_analysis["current_mermaid"]:
-            st.markdown("---")
-            st.subheader("🛠️ Modify Mermaid Diagram")
-            
-            mod_prompt = st.text_area(
-                "Describe changes to modify the Mermaid diagram:",
-                placeholder="Example: Add a cache controller between CPU and memory, or modify the datapath connections..."
+            st.markdown("### 🧩 Mermaid.js Code")
+            mermaid_code = st.text_area(
+                "Edit the Mermaid.js code below as needed:",
+                value=st.session_state.diagram_analysis["current_mermaid"],
+                height=300,
+                key="mermaid_code_editor"
             )
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Update Diagram"):
-                    with st.spinner("Applying changes..."):
-                        update_prompt = f"""Modify this Mermaid.js flowchart according to these changes:
-                        {mod_prompt}
-                        
-                        Current diagram:
-                        {st.session_state.diagram_analysis["current_mermaid"]}
-                        
-                        Return ONLY the modified Mermaid.js code."""
-                        
-                        modified_mermaid = ask_text(update_prompt)
-                        st.session_state.diagram_analysis["current_mermaid"] = modified_mermaid
-                        st.session_state.modifications.append((mod_prompt, modified_mermaid))
-                        st.rerun()
-            
-            with col2:
-                if st.button("Finalize Design"):
-                    st.session_state.stage = 5
+            if st.button("Generate Flow"):
+                st.session_state.diagram_analysis["current_mermaid"] = mermaid_code
+                st.session_state.show_flow = True
+                st.rerun()
+    
+    # Only render the diagram if 'Generate Flow' was pressed
+    if st.session_state.get("show_flow"):
+        st.markdown("### 🔄 Interactive Diagram")
+        mermaid_div = f"""
+            <div class="mermaid">
+            {st.session_state.diagram_analysis["current_mermaid"]}
+            </div>
+        """
+        html_code = f"""
+            <html>
+            <body>
+                {mermaid_div}
+                <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+                <script>
+                    mermaid.initialize({{
+                        startOnLoad: true,
+                        theme: 'default',
+                        flowchart: {{
+                            useMaxWidth: true,
+                            htmlLabels: true,
+                            curve: 'basis'
+                        }}
+                    }});
+                </script>
+            </body>
+            </html>
+        """
+        st.components.v1.html(html_code, height=500)
+    
+    # LLM-based modification (optional, as before)
+    if st.session_state.get("show_flow"):
+        st.markdown("---")
+        st.subheader("🛠️ Modify Mermaid Diagram")
+        mod_prompt = st.text_area(
+            "Describe changes to modify the Mermaid diagram:",
+            placeholder="Example: Add a cache controller between CPU and memory, or modify the datapath connections..."
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Update Diagram"):
+                with st.spinner("Applying changes..."):
+                    update_prompt = f"""Modify this Mermaid.js flowchart according to these changes:
+                    {mod_prompt}
+                    
+                    Current diagram:
+                    {st.session_state.diagram_analysis["current_mermaid"]}
+                    
+                    Return ONLY the modified Mermaid.js code."""
+                    modified_mermaid = ask_text(update_prompt)
+                    st.session_state.diagram_analysis["current_mermaid"] = modified_mermaid
                     st.rerun()
-            
-            # Show modification history
-            if st.session_state.modifications:
-                st.markdown("---")
-                with st.expander("📋 Modification History", expanded=False):
-                    for i, (prompt, _) in enumerate(st.session_state.modifications):
-                        st.text(f"{i+1}. {prompt}")
+        with col2:
+            if st.button("Finalize Design"):
+                st.session_state.stage = 5
+                st.rerun()
+        # Show modification history
+        if st.session_state.modifications:
+            st.markdown("---")
+            with st.expander("📋 Modification History", expanded=False):
+                for i, (prompt, _) in enumerate(st.session_state.modifications):
+                    st.text(f"{i+1}. {prompt}")
 
 # ✅ Final Download
 elif st.session_state.stage == 5:
