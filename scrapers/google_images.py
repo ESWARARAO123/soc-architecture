@@ -27,21 +27,18 @@ def fetch_top_images(query, n=5):
 
     for img in imgs:
         src = img.get("src")
-        if src and src.startswith("http") and len(result) < n:
+        # Only process http/https URLs, skip base64 and SVGs
+        if src and src.startswith("http"):
             try:
-                # Get image data
                 resp = requests.get(src, timeout=5)
-                
-                # Verify it's a valid image
                 img_data = resp.content
-                img = Image.open(io.BytesIO(img_data))
-                
-                # Save as PNG
+                img_obj = Image.open(io.BytesIO(img_data))
                 os.makedirs("static", exist_ok=True)
                 filename = os.path.join("static", f"arch_{len(result)}.png")
-                img.save(filename, "PNG")
-                
+                img_obj.save(filename, "PNG")
                 result.append(filename)
+                if len(result) >= n:
+                    break
             except Exception as e:
                 print(f"Failed to process image: {e}")
                 continue
